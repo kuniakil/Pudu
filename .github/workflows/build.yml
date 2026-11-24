@@ -10,10 +10,10 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: build-${{ github.ref }}
-  # 不取消进行中的 run：macOS runner 排队较久，取消重排会白等
-  cancel-in-progress: false
+# 注：刻意不设 concurrency group。
+# GitHub 的 macOS runner 排队较久，若用 concurrency + cancel-in-progress，
+# 一个卡在队列里的原生 macOS job 会连带阻塞后续 run 的通用二进制构建。
+# 每个 push 独立成 run，互不阻塞。
 
 jobs:
   build:
