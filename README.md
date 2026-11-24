@@ -2,6 +2,26 @@
 
 五线谱与简谱互转工具。
 
+> ## 🌐 本 fork：macOS / Linux 支持
+>
+> 上游版本只支持 Windows（MSVC + vcpkg 强制依赖）。本 fork 增加了 **macOS（Apple Silicon）与 Linux** 支持：
+>
+> - C++ 核心的 Windows 专属调用已收敛到**平台层**（`src/platform/`），转换逻辑一行未改，**识别质量与上游 Windows 版一致**
+> - Audiveris（OMR 引擎）官方提供 macOS / Linux 版，三平台 CLI 参数完全相同
+> - GitHub Actions 自动构建 `macos-15`（Apple Silicon）与 `ubuntu-24.04`，产出可直接下载的 artifact
+> - 新增 `tools/quickstart.py`（一键出图：图片/PDF → 简谱 PNG + PDF）与 `tools/render_jianpu.py`（HTML → PNG/PDF）
+>
+> **快速开始：**
+> ```bash
+> # 1. 装 Audiveris（macOS：拖 dmg 进 /Applications；Linux：sudo apt install ./*.deb）
+> # 2. 从 Actions 下载 artifact，解压后得到 Pudu + tools/
+> # 3. 一键出图
+> python3 tools/quickstart.py 我的谱子.png
+> ```
+>
+> 完整说明见 **[docs/PORT-macos-linux.md](docs/PORT-macos-linux.md)**。
+> 以下为上游原始 README（功能与架构的权威文档）。
+
 > 当前状态（2026-08-24）：已实现 **MusicXML ⇄ 简谱** 双向转换（阶段 2 + 阶段 3），支持纯文本(L1)、二维 HTML(L2)、结构化 JSON(L3)，并通过 music21 跨语言 100% 校验（13492/13492 音符）。OMR 识别（阶段 1）完成黑盒集成并迁移到 **Audiveris 默认引擎 + oemer 回退**（2026-08-12，note_pass 97.56%）；**P1-1 后处理音乐规则引擎已交付**（5 类规则，干净输入零修正）。**L2 简谱渲染已修正**（2026-08-24：休止符去增时线 / 增时线空格分隔 / 临时记号左上角标 / 八度点附点加大 / 降八度点移至减时线下方），**AV 多页拼接 divisions 统一**（16 分音符不再塌 8 分）。仓库已于 2026-08-13 清理：测试代码、评测工具与调研文档移入 `to_be_delete/` 归档，功能代码不受影响。
 
 ## 阶段与里程碑
