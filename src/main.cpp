@@ -204,8 +204,11 @@ int main(int argc, char* argv[]) {
             cfg.python = omrPythonPath;
             cfg.pythonExplicit = true;
         }
-        if (cfg.engine == "oemer" || cfg.engine == "audiveris")
+        if (cfg.engine == "oemer")
             cfg.python = pudu::resolveOmerPython(cfg);
+        else if (cfg.engine == "audiveris")
+            // audiveris 适配层是 stdlib-only，不需要装 oemer
+            cfg.python = pudu::resolvePython(cfg);
         std::string avail;
         if (!pudu::isOmrEngineAvailable(cfg, avail)) {
             std::cerr << "[错误] OMR 引擎不可用 (" << omrEngine << "): " << avail << std::endl;

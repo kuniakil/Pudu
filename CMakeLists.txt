@@ -101,6 +101,7 @@ enable_testing()
 add_executable(PuduTests
     test/pudu_test_main.cpp
     test/test_jianpu_render_config.cpp
+    test/test_platform.cpp
     src/jianpu_converter.cpp
     src/musicxml_parser.cpp
     ${PUDU_PLATFORM_SOURCES}

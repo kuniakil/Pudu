@@ -64,14 +64,28 @@ static bool pythonCanImportOemer(const std::string& pyExe) {
     return rc == 0;
 }
 
-// 解析可用于 oemer 的 python（见头文件声明）
-std::string resolveOmerPython(const OmrEngineConfig& cfg) {
-    if (cfg.pythonExplicit && !cfg.python.empty() && cfg.python != "python")
-        return cfg.python;
+// 探测某 python 解释器能否启动（不要求装任何包）
+static bool pythonCanRun(const std::string& pyExe) {
+    if (pyExe.empty()) return false;
+    std::string out, err;
+    int rc = runCommand("\"" + pyExe + "\" -c \"pass\"", 30000, out, err);
+    return rc == 0;
+}
+
+// python 解释器候选（按平台惯例排序）
+static std::vector<std::string> pythonCandidates(const OmrEngineConfig& cfg) {
     std::vector<std::string> cands;
+    if (cfg.pythonExplicit && !cfg.python.empty() && cfg.python != "python")
+        cands.push_back(cfg.python);
     std::string envPy = pudu::platform::envGet("PUDU_OMR_PYTHON");
     if (!envPy.empty()) cands.push_back(envPy);
+#ifdef _WIN32
     cands.push_back("python");
+#else
+    // POSIX 惯例是 python3；多数发行版不再提供无版本号的 python
+    cands.push_back("python3");
+    cands.push_back("python");
+#endif
     std::string home = pudu::platform::homeDir();
     if (!home.empty()) {
 #ifdef _WIN32
@@ -80,10 +94,27 @@ std::string resolveOmerPython(const OmrEngineConfig& cfg) {
         cands.push_back(home + "/.workbuddy/binaries/python/bin/python3");
 #endif
     }
-    for (const auto& c : cands) {
+    return cands;
+}
+
+// 解析可用于 oemer 的 python（见头文件声明）
+std::string resolveOmerPython(const OmrEngineConfig& cfg) {
+    if (cfg.pythonExplicit && !cfg.python.empty() && cfg.python != "python")
+        return cfg.python;
+    for (const auto& c : pythonCandidates(cfg)) {
         if (pythonCanImportOemer(c)) return c;
     }
     return cfg.python; // 兜底（原默认），错误信息据此生成
+}
+
+// 解析「能启动」的 python（不要求装 oemer）
+std::string resolvePython(const OmrEngineConfig& cfg) {
+    if (cfg.pythonExplicit && !cfg.python.empty())
+        return cfg.python;
+    for (const auto& c : pythonCandidates(cfg)) {
+        if (pythonCanRun(c)) return c;
+    }
+    return cfg.python;
 }
 
 // 写内嵌 fixture 样例到 out（C++ 原生，确定性）
@@ -184,9 +215,8 @@ bool isOmrEngineAvailable(const OmrEngineConfig& cfg, std::string& detail) {
         return false;
     }
     if (cfg.engine == "audiveris") {
-        // 不探测 python（AV 适配层 stdlib-only；python 可用性交给 runOmr 的
-        // CreateProcess 失败自然暴露）。AV exe 定位在 Python 侧经 env
-        // PUDU_AUDIVERIS_EXE / 仓库默认路径，C++ 不碰。
+        // AV exe 定位在 Python 侧经 env PUDU_AUDIVERIS_EXE / 平台默认路径，C++ 不碰。
+        // C++ 侧只需确认：适配层脚本在位 + 有可用的 python 解释器。
         if (cfg.toolsDir.empty()) {
             detail = "audiveris 引擎未配置 toolsDir";
             return false;
@@ -196,7 +226,13 @@ bool isOmrEngineAvailable(const OmrEngineConfig& cfg, std::string& detail) {
             detail = "audiveris 适配层缺失: " + script;
             return false;
         }
-        detail = "audiveris 可用（toolsDir=" + cfg.toolsDir + "）";
+        std::string py = resolvePython(cfg);
+        if (!pythonCanRun(py)) {
+            detail = "audiveris 引擎需可用的 python 解释器，当前不可用 (python=" +
+                     py + ")";
+            return false;
+        }
+        detail = "audiveris 可用（toolsDir=" + cfg.toolsDir + "，python=" + py + "）";
         return true;
     }
     detail = "未知引擎: " + cfg.engine;

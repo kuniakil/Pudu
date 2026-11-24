@@ -190,13 +190,18 @@ std::string executableDir() {
     ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (n <= 0) {
 #ifdef __APPLE__
-        // macOS 无 /proc；用 dyld 取自身路径
+        // macOS 无 /proc；用 dyld 取自身路径。
+        // 注意：_NSGetExecutablePath(NULL, &size) 首次调用必然返回 -1（缓冲区太小
+        // 或为 NULL），但它已经把所需长度写进 size —— 不能把这个 -1 当失败。
         uint32_t size = 0;
-        if (_NSGetExecutablePath(nullptr, &size) != 0 || size == 0) return {};
-        std::vector<char> tmp(size);
+        _NSGetExecutablePath(nullptr, &size);
+        if (size == 0) return {};
+        std::vector<char> tmp(size + 1);
         if (_NSGetExecutablePath(tmp.data(), &size) != 0) return {};
-        n = static_cast<ssize_t>(size);
-        std::memcpy(buf, tmp.data(), std::min<size_t>(size, sizeof(buf) - 1));
+        n = static_cast<ssize_t>(std::strlen(tmp.data()));
+        if (n <= 0) return {};
+        std::memcpy(buf, tmp.data(), std::min<size_t>(static_cast<size_t>(n),
+                                                       sizeof(buf) - 1));
 #else
         return {};
 #endif
