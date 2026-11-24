@@ -22,7 +22,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15-arm64
+          # 注意：GitHub 的 Apple Silicon label 是 macos-15 / macos-latest /
+          # macos-26（macos-*-intel 才是 Intel 版），不存在 macos-*-arm64。
+          - os: macos-15
             label: macos-arm64
             artifact: pudu-macos-arm64
           - os: ubuntu-24.04
