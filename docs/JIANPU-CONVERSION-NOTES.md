@@ -21,8 +21,9 @@
 
 1. 目标体裁 = **双手简谱**（左右手都写数字，**无和弦标记**）→ **不需要**和弦识别
 2. 剩三个真问题：**歌词**（唯一的墙）、**印刷级排版**（换渲染器可解）、**转调/装饰音**
-3. 下一步：按 `REFERENCES.md` §2 抓《月下煮茶》**五线谱 5 张**，与现有简谱组成配对，
-   跑一次全链路**逐小节比对**，把「排版难看」和「音符是错的」分开
+3. 下一步：语料**已抓好**（`data/yxdc/`，5 张五线谱 + 3 张简谱，sha256 校验）。
+   先解决**两版小节数差 1** 的问题（`data/yxdc/MANIFEST.md` §3），
+   再跑全链路**逐小节比对**，把「排版难看」和「音符是错的」分开
 4. 若要自建算法：先评估 `REFERENCES.md` §4 的候选项目，考虑 fork 而非从零做
 
 ---
@@ -38,11 +39,11 @@
 
 > Nextcloud 实体在 n100（ssh `n100`，用户 `kuniaki`），路径 `~/文件/曲譜/`。
 
-### 1.1 ⭐ 可用的 ground truth 配对（下次 session 优先用这个）
+### 1.1 ⭐ ground truth 配对（**已于 2026-11-24 抓取落地**）
 
 **everyonepiano.cn（= eopiano.com 中文站）同一页面同时提供五线谱与简谱。**
 《月下煮茶》页面 `https://everyonepiano.cn/Piano-19895.html`：**5 张五线谱 + 3 张简谱**，
-而那 3 张简谱**正是**用户参考语料里的 `月下煮茶01~03.png`。
+而那 3 张简谱**正是**用户参考语料里的 `月下煮茶01~03.png`（sha256 完全一致）。
 
 图片 URL 规则（已验证）：
 
@@ -53,8 +54,18 @@ https://everyonepiano.cn/pianomusic/020/0019895/0019895-j-b-{N}.png   ← 简谱
 （注意：页面本身 `www.everyonepiano.cn` 的 DNS 解析不了，**去掉 `www.`** 才能访问；
 图片 URL 里带不带 `www.` 都能取。）
 
-**这给了我们同一部作品的「输入 → 期望输出」配对**，可以量化评估整条链路，
-不必依赖人工目测。下一个 session 应优先把这个跑通。
+**已落地**：`data/yxdc/`（图片不入库，脚本按 sha256 重建）——
+
+```bash
+bash tools/fetch_ground_truth.sh     # 幂等，抓取 + 校验
+```
+
+清单与小节对齐表见 [`data/yxdc/MANIFEST.md`](../data/yxdc/MANIFEST.md)。
+
+> ⚠️ **抓取时发现的新问题**：五线谱版与简谱版的**印刷小节号对不上**
+> （对齐点 1 / 13 / 25 / 61，之后漂移；推得总小节 **78 vs 79**）。
+> **逐小节比对前必须先解决**，否则从第 62 小节起整体错位，比对结论全是假阳性。
+> 详见 `data/yxdc/MANIFEST.md` §3。
 
 ---
 
@@ -293,12 +304,17 @@ OSMD 的 jianpu 分支、以及中文圈可能的「简谱 OCR/生成」项目�
 3. **歌词是必须的吗**？（决定 OMR 这条路还有没有路走）
 
 ### 9.2 技术验证（可独立推进）
-4. **抓取 everyonepiano.cn 的《月下煮茶》五线谱 5 张**（URL 规律见 §1.1），
-   与已有的 3 张简谱组成 ground truth 配对
-5. 跑通 **Audiveris → MusicXML → Pudu L2 → PNG**，与 ground truth 简谱**逐小节比对**，
+4. ~~**抓取 everyonepiano.cn 的《月下煮茶》五线谱 5 张**~~ ✅ **已完成 2026-11-24**
+   → `data/yxdc/`，重建指令 `bash tools/fetch_ground_truth.sh`
+5. ⭐ **先解决小节数分歧**（下一步的第一个技术动作）：
+   用 Audiveris 跑 `data/yxdc/yxdc-staff-1.png`，拿它报的**权威小节数**，
+   和简谱侧的印刷编号（对齐表见 `data/yxdc/MANIFEST.md` §3）比对，
+   **定位到具体是哪一个小节多/少**，确定逐小节比对的偏移量。
+   在这之前不要直接开比对，否则结论全是假阳性。
+6. 跑通 **Audiveris → MusicXML → Pudu L2 → PNG**，与 ground truth 简谱**逐小节比对**，
    量化「音符层」的真实准确率（把「排版难看」和「音符错」这两件事分开）
-6. 评估 §7 路线 D：调研现存的「五线谱→简谱」开源项目，列出候选清单与评估维度
+7. 评估 §7 路线 D：调研现存的「五线谱→简谱」开源项目，列出候选清单与评估维度
 
 ### 9.3 环境重建（若继续路线 B/C）
-7. 重装 Audiveris macOS arm64（81MB dmg；`curl` 下载可避开 Gatekeeper quarantine）
-8. 需要 lyrics 时另建中文 OCR 方案
+8. 重装 Audiveris macOS arm64（84.9MB dmg；`curl` 下载可避开 Gatekeeper quarantine）
+9. 需要 lyrics 时另建中文 OCR 方案
