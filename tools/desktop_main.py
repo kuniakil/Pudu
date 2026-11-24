@@ -82,12 +82,19 @@ class PuduApi:
         return list(paths) if paths else []
 
     def pick_exe(self):
-        """原生对话框选 .exe（设置里指定 Audiveris.exe 路径用）。"""
+        """原生对话框选可执行文件（设置里指定 Audiveris 路径用）。
+        Windows 为 .exe；macOS/Linux 的 Audiveris 是 .app bundle 或脚本，
+        故此处放宽筛选，允许选应用包与任意可执行文件。"""
         import webview
         w = webview.windows[0]
+        if sys.platform == "win32":
+            file_types = ("程序（*.exe）",)
+        elif sys.platform == "darwin":
+            file_types = ("应用（*.app）", "程序（*）")
+        else:
+            file_types = ("程序（*）",)
         paths = w.create_file_dialog(
-            webview.OPEN_DIALOG, allow_multiple=False,
-            file_types=("程序（*.exe）",))
+            webview.OPEN_DIALOG, allow_multiple=False, file_types=file_types)
         return list(paths) if paths else []
 
     def save_result(self, job_id: str, name: str):
