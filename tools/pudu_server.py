@@ -75,15 +75,21 @@ _APP_DIR = os.path.dirname(os.path.abspath(sys.executable))   # 外壳 exe 目�
 # 脚本/UI 目录：开发态 = tools/；打包态 = _MEIPASS（bundle 内 data），兜底 exe 目录。
 TOOLS = HERE if not _is_frozen() else (_MEIPASS or _APP_DIR)
 
-# Pudu.exe（L2 渲染核心）：打包态候选 = exe 目录 / _MEIPASS；
-# 开发态候选 = 仓库 build/ 各层级（含 vcpkg Debug/Release 子目录，历史落点）。
+# Pudu 二进制（L2 渲染核心）：Windows 为 Pudu.exe，macOS/Linux 为 Pudu。
+# 打包态候选 = exe 目录 / _MEIPASS；
+# 开发态候选 = 仓库 build/ 各层级（含 vcpkg Debug/Release 与 macos/linux preset 子目录）。
+_IS_WIN = (sys.platform == "win32")
+_EXE_NAME = "Pudu.exe" if _IS_WIN else "Pudu"
+
 PUDU_EXE = _first_existing(
-    os.path.join(HERE, "Pudu.exe"),                     # 扁平便携目录：脚本旁放 Pudu.exe
-    *(os.path.join(d, "Pudu.exe") for d in (_APP_DIR, _MEIPASS) if d),
-    os.path.join(REPO, "build", "Pudu.exe"),
-    os.path.join(REPO, "build", "windows-msvc-vcpkg", "Debug", "Pudu.exe"),
-    os.path.join(REPO, "build", "windows-msvc-vcpkg", "Release", "Pudu.exe"),
-) or os.path.join(REPO, "build", "Pudu.exe")
+    os.path.join(HERE, _EXE_NAME),                     # 扁平便携目录：脚本旁放二进制
+    *(os.path.join(d, _EXE_NAME) for d in (_APP_DIR, _MEIPASS) if d),
+    os.path.join(REPO, "build", _EXE_NAME),
+    os.path.join(REPO, "build", "windows-msvc-vcpkg", "Debug", _EXE_NAME),
+    os.path.join(REPO, "build", "windows-msvc-vcpkg", "Release", _EXE_NAME),
+    os.path.join(REPO, "build", "macos-arm64", _EXE_NAME),
+    os.path.join(REPO, "build", "linux-x64", _EXE_NAME),
+) or os.path.join(REPO, "build", _EXE_NAME)
 
 # 前端页面：打包态候选 = _MEIPASS / exe 目录；开发态 = tools/。
 UI_HTML = _first_existing(
@@ -214,18 +220,26 @@ def save_settings(settings: Dict[str, str]) -> None:
 
 
 def _bundled_audiveris_exe() -> str:
-    """打包态随包 AV 路径（_MEIPASS/_APP_DIR 下 audiveris/Audiveris/Audiveris.exe）；dev 返回空。"""
+    """打包态随包 AV 路径；dev 返回空。
+    Windows: audiveris/Audiveris/Audiveris.exe
+    macOS:   audiveris/Audiveris.app/Contents/MacOS/Audiveris
+    """
     if not _is_frozen():
         return ""
+    rels = [os.path.join("audiveris", "Audiveris", "Audiveris.exe")]
+    if not _IS_WIN:
+        rels.append(os.path.join("audiveris", "Audiveris.app", "Contents",
+                                 "MacOS", "Audiveris"))
     for base in (_MEIPASS, _APP_DIR):
-        p = os.path.join(base, "audiveris", "Audiveris", "Audiveris.exe")
-        if os.path.isfile(p):
-            return p
+        for rel in rels:
+            p = os.path.join(base, rel)
+            if os.path.isfile(p):
+                return p
     return ""
 
 
 def resolve_audiveris_exe(settings: Optional[Dict[str, str]] = None) -> Optional[str]:
-    """选址：settings.audiveris_exe → env PUDU_AUDIVERIS_EXE → 仓库默认路径 → 随包路径 → PATH。
+    """选址：settings.audiveris_exe → env PUDU_AUDIVERIS_EXE → 平台默认路径 → 随包路径 → PATH。
     与 omr_audiveris.py 的 resolve_audiveris_exe 口径一致（镜像）。"""
     s = settings if settings is not None else load_settings()
     candidates = []
@@ -234,15 +248,25 @@ def resolve_audiveris_exe(settings: Optional[Dict[str, str]] = None) -> Optional
     env = os.environ.get("PUDU_AUDIVERIS_EXE")
     if env:
         candidates.append(env)
-    candidates.append(os.path.join(REPO, "build", "_audiveris", "extract",
-                                   "Audiveris", "Audiveris.exe"))
+    if _IS_WIN:
+        candidates.append(os.path.join(REPO, "build", "_audiveris", "extract",
+                                       "Audiveris", "Audiveris.exe"))
+    elif sys.platform == "darwin":
+        candidates.append("/Applications/Audiveris.app/Contents/MacOS/Audiveris")
+        candidates.append(os.path.join(REPO, "build", "_audiveris",
+                                       "Audiveris.app", "Contents", "MacOS",
+                                       "Audiveris"))
+    else:
+        candidates.append("/opt/audiveris/bin/Audiveris")
+        candidates.append(os.path.join(REPO, "build", "_audiveris",
+                                       "Audiveris", "Audiveris"))
     bundled = _bundled_audiveris_exe()
     if bundled:
         candidates.append(bundled)
     for c in candidates:
         if c and os.path.isfile(c):
             return c
-    return shutil.which("Audiveris.exe")
+    return shutil.which("Audiveris.exe" if _IS_WIN else "Audiveris")
 
 
 def check_engine_available(engine: str,
@@ -1148,22 +1172,38 @@ _SINGLETON_HANDLE = None  # 进程存活期持有互斥句柄，防止内核对�
 
 
 def _acquire_single_instance() -> bool:
-    """Windows 单实例互斥：已存在实例返回 False（本次启动应退出）。
-    env PUDU_SINGLETON=0 可关闭（测试/多实例）。非 Windows 恒返回 True。"""
+    """单实例互斥：已存在实例返回 False（本次启动应退出）。
+    Windows 用具名互斥体；POSIX 用 flock 锁住 lock 文件。
+    env PUDU_SINGLETON=0 可关闭（测试/多实例）。"""
     global _SINGLETON_HANDLE
-    if sys.platform != "win32" or os.environ.get("PUDU_SINGLETON", "1") == "0":
+    if os.environ.get("PUDU_SINGLETON", "1") == "0":
         return True
-    import ctypes
-    _ERROR_ALREADY_EXISTS = 183
-    name = "Local\\PuduServer.Singleton"
-    handle = ctypes.windll.kernel32.CreateMutexW(None, False, name)
-    if not handle:
-        return True  # 创建失败保守放行，不阻塞启动
-    if ctypes.windll.kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
-        ctypes.windll.kernel32.CloseHandle(handle)
-        return False
-    _SINGLETON_HANDLE = handle
-    return True
+    if sys.platform == "win32":
+        import ctypes
+        _ERROR_ALREADY_EXISTS = 183
+        name = "Local\\PuduServer.Singleton"
+        handle = ctypes.windll.kernel32.CreateMutexW(None, False, name)
+        if not handle:
+            return True  # 创建失败保守放行，不阻塞启动
+        if ctypes.windll.kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return False
+        _SINGLETON_HANDLE = handle
+        return True
+    # POSIX：flock 独占锁；锁被占用 = 已有实例在跑
+    try:
+        import fcntl
+        path = os.path.join(appdata_dir(), "server.lock")
+        fh = open(path, "a+")
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, OSError):
+            fh.close()
+            return False
+        _SINGLETON_HANDLE = fh  # 进程存活期持有句柄
+        return True
+    except Exception:
+        return True  # 保守放行，不阻塞启动
 
 
 def _port_file_path() -> str:

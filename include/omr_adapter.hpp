@@ -40,10 +40,16 @@ struct OmrEngineConfig {
 // 解析可用于 oemer 的 python 解释器（自动选址）：
 //   1) 显式指定（--omr-python）直接采用；
 //   2) 环境变量 PUDU_OMR_PYTHON；
-//   3) PATH 上的 python；
-//   4) 由 USERPROFILE 推导的托管 venv（managed runtime 约定 envs/default）。
+//   3) PATH 上的 python（POSIX 优先 python3，Windows 为 python）；
+//   4) 由用户主目录推导的托管 venv（managed runtime 约定 envs/default）。
 // 返回第一个能 import oemer 的解释器路径；都不行则兜底返回 cfg.python。
 std::string resolveOmerPython(const OmrEngineConfig& cfg);
+
+// 解析「能启动」的 python 解释器（不要求装了 oemer）。
+// audiveris 引擎走 tools/omr_audiveris.py（stdlib-only），只需要解释器可用，
+// 不能沿用 resolveOmerPython —— 那会以「能否 import oemer」为判据，
+// 在未装 oemer 的机器上会把可用的解释器判为不可用。
+std::string resolvePython(const OmrEngineConfig& cfg);
 
 // 运行 OMR：把 input(图片/PDF) 识别为 MusicXML，写到 outMusicXml。
 // 成功返回 true；失败 err 含诊断。fixture 引擎为 C++ 原生写内嵌样例。

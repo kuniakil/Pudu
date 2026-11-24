@@ -9,8 +9,10 @@
 // ----------------------------------------------------------------------
 
 #include <iostream>
+#ifdef _WIN32
 #include <windows.h>
 #include <shellapi.h>
+#endif
 #include <string>
 #include <vector>
 #include <fstream>
@@ -25,8 +27,33 @@
 #include "jianpu_text_parser.hpp" // G4：简谱文本输入解析（L1 文本 -> JianpuDoc）
 #include "omr_adapter.hpp"          // 阶段1 OMR 黑盒集成适配层
 #include "jianpu_postcorrect.hpp"   // P1-1：后处理音乐规则引擎（确定性自修/标记）
+#include "platform/platform.hpp"    // 跨平台抽象层（tools 目录选址等）
 
 namespace {
+
+// tools/ 目录选址（跨平台分发场景）：
+//   1) env PUDU_TOOLS_DIR（显式覆盖，最高优先）
+//   2) 编译期注入的 PUDU_TOOLS_DIR（仅当该目录确实存在）
+//   3) 可执行文件同级的 tools/（便携发行布局：Pudu + tools/ 放一起）
+//   4) 可执行文件上两级的 tools/（开发布局：build/Pudu + 仓库根 tools/）
+// 编译期注入的绝对路径在 CI 构建 / 分发场景下通常不存在（那是构建机的路径），
+// 故必须回退，否则 `--from-omr` 会报「适配层缺失」。
+std::string resolveToolsDir(const std::string& compiledIn) {
+    auto usable = [](const std::string& d) {
+        return !d.empty() &&
+               pudu::platform::fileExists(d + "/omr_audiveris.py");
+    };
+    std::string env = pudu::platform::envGet("PUDU_TOOLS_DIR");
+    if (usable(env)) return env;
+    if (usable(compiledIn)) return compiledIn;
+    std::string exeDir = pudu::platform::executableDir();
+    if (!exeDir.empty()) {
+        if (usable(exeDir + "/tools")) return exeDir + "/tools";
+        if (usable(exeDir + "/../../tools")) return exeDir + "/../../tools";
+    }
+    // 都不可用时保留编译期值，让报错信息指向原始路径
+    return compiledIn.empty() ? env : compiledIn;
+}
 
 // fifths(五度圈步数) -> 调名（MVP 仅覆盖 ≤2 升降号）
 std::string keyName(int fifths, const std::string& mode) {
@@ -83,7 +110,9 @@ const char* kEmbeddedSample = R"(<?xml version="1.0" encoding="UTF-8"?>
 } // anonymous namespace
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
     SetConsoleOutputCP(65001); // 设置控制台输出代码页为 UTF-8，消除中文乱码
+#endif
 
 #ifdef _WIN32
     // Windows 窄字符 argv 按 ANSI 代码页（cp936）解码，中文参数（如 --title）会
@@ -162,16 +191,24 @@ int main(int argc, char* argv[]) {
         pudu::OmrEngineConfig cfg;
         cfg.engine = omrEngine;
         cfg.python = "python";
+        {
 #ifdef PUDU_TOOLS_DIR
-        cfg.toolsDir = PUDU_TOOLS_DIR;
+            std::string compiledToolsDir = PUDU_TOOLS_DIR;
+#else
+            std::string compiledToolsDir;
 #endif
+            cfg.toolsDir = resolveToolsDir(compiledToolsDir);
+        }
         cfg.preprocess = omrPreprocess;
         if (omrPythonExplicit && !omrPythonPath.empty()) {
             cfg.python = omrPythonPath;
             cfg.pythonExplicit = true;
         }
-        if (cfg.engine == "oemer" || cfg.engine == "audiveris")
+        if (cfg.engine == "oemer")
             cfg.python = pudu::resolveOmerPython(cfg);
+        else if (cfg.engine == "audiveris")
+            // audiveris 适配层是 stdlib-only，不需要装 oemer
+            cfg.python = pudu::resolvePython(cfg);
         std::string avail;
         if (!pudu::isOmrEngineAvailable(cfg, avail)) {
             std::cerr << "[错误] OMR 引擎不可用 (" << omrEngine << "): " << avail << std::endl;

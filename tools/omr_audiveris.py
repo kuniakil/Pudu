@@ -51,25 +51,53 @@ except Exception as e:  # noqa: BLE001
     mark_meter_constraint_failures = None
     sys.stderr.write(f"[警告] 无法导入 geometric_pitch（拍号打标跳过）: {e}\n")
 
-# 仓库默认 AV 安装路径（gitignored；由 A/B 阶段 MSI 解包而来）
-_DEFAULT_EXE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "build", "_audiveris", "extract", "Audiveris", "Audiveris.exe")
+# Audiveris 启动器的平台相关候选路径。
+#   Windows: build/_audiveris/extract/Audiveris/Audiveris.exe（仓库默认，MSI 解包）
+#   macOS:   /Applications/Audiveris.app/Contents/MacOS/Audiveris（官方 dmg 拖入）
+#   Linux:   /opt/audiveris/bin/Audiveris（官方 deb 安装）
+# 三平台共用同一套 CLI 参数（-batch -export -output -sheets），故其余逻辑无需分叉。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+if sys.platform == "darwin":
+    _DEFAULT_EXE_CANDIDATES = [
+        "/Applications/Audiveris.app/Contents/MacOS/Audiveris",
+        os.path.join(_REPO_ROOT, "build", "_audiveris", "Audiveris.app",
+                     "Contents", "MacOS", "Audiveris"),
+    ]
+    _PATH_NAMES = ["Audiveris"]
+elif sys.platform.startswith("linux"):
+    _DEFAULT_EXE_CANDIDATES = [
+        "/opt/audiveris/bin/Audiveris",
+        os.path.join(_REPO_ROOT, "build", "_audiveris", "Audiveris", "Audiveris"),
+    ]
+    _PATH_NAMES = ["Audiveris"]
+else:
+    _DEFAULT_EXE_CANDIDATES = [
+        os.path.join(_REPO_ROOT, "build", "_audiveris", "extract",
+                     "Audiveris", "Audiveris.exe"),
+    ]
+    _PATH_NAMES = ["Audiveris.exe"]
+
 _TIMEOUT_S = int(os.environ.get("PUDU_AUDIVERIS_TIMEOUT", "600"))
 _PDF_EXT = ".pdf"
 
 
 def resolve_audiveris_exe() -> Optional[str]:
-    """三级选址：env PUDU_AUDIVERIS_EXE → 仓库默认路径 → PATH。
+    """选址：env PUDU_AUDIVERIS_EXE → 平台默认路径 → PATH。
 
     显式指定（env）但文件不存在 → 返回 None（尊重用户覆盖意图，让错误明确）。
     """
     env = os.environ.get("PUDU_AUDIVERIS_EXE")
     if env:
         return env if os.path.isfile(env) else None
-    if os.path.isfile(_DEFAULT_EXE):
-        return _DEFAULT_EXE
-    return shutil.which("Audiveris.exe")
+    for c in _DEFAULT_EXE_CANDIDATES:
+        if os.path.isfile(c):
+            return c
+    for name in _PATH_NAMES:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
 
 
 def count_pdf_pages(pdf_path: str) -> int:
@@ -331,10 +359,20 @@ def main(argv: List[str]) -> int:
         return 1
     exe = resolve_audiveris_exe()
     if not exe:
-        sys.stderr.write(
-            "[错误] Audiveris 未安装。请设置环境变量 PUDU_AUDIVERIS_EXE 指向 "
-            "Audiveris.exe（或放入 PATH）；默认期望 build/_audiveris/extract/"
-            "Audiveris/Audiveris.exe\n")
+        if sys.platform == "darwin":
+            hint = ("请安装官方 macOS 版（Audiveris-*-macosx-arm64.dmg）并把 "
+                    "Audiveris.app 拖入 /Applications；或设置环境变量 "
+                    "PUDU_AUDIVERIS_EXE 指向 "
+                    "/Applications/Audiveris.app/Contents/MacOS/Audiveris")
+        elif sys.platform.startswith("linux"):
+            hint = ("请安装官方 deb（sudo apt install ./Audiveris-*-ubuntu*.deb，"
+                    "装到 /opt/audiveris/bin/Audiveris）；或设置环境变量 "
+                    "PUDU_AUDIVERIS_EXE 指向它")
+        else:
+            hint = ("请设置环境变量 PUDU_AUDIVERIS_EXE 指向 Audiveris.exe"
+                    "（或放入 PATH）；默认期望 build/_audiveris/extract/"
+                    "Audiveris/Audiveris.exe")
+        sys.stderr.write("[错误] Audiveris 未安装。" + hint + "\n")
         return 1
 
     out_abs = os.path.abspath(out_path)

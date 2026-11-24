@@ -6,8 +6,7 @@
 // ----------------------------------------------------------------------
 
 #include "omr_adapter.hpp"
-
-#include <windows.h>
+#include "platform/platform.hpp"
 
 #include <array>
 #include <fstream>
@@ -48,57 +47,13 @@ static const char* kOmrFixtureMusicXml = R"(<?xml version="1.0" encoding="UTF-8"
 
 // 运行命令，捕获 stdout+stderr 到 output。返回进程退出码；
 // 超时返回 -2；创建失败返回 -3。err 含失败原因。
+// 实现委托给平台层（Windows: CreateProcess；POSIX: fork/execvp + poll）。
 static int runCommand(const std::string& cmd, int timeoutMs,
                       std::string& output, std::string& err) {
-    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
-    HANDLE hRead = nullptr, hWrite = nullptr;
-    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) {
-        err = "CreatePipe 失败";
-        return -3;
-    }
-
-    STARTUPINFOA si{sizeof(si)};
-    si.hStdOutput = hWrite;
-    si.hStdError = hWrite;
-    si.dwFlags = STARTF_USESTDHANDLES;
-
-    PROCESS_INFORMATION pi{};
-    // CreateProcessA 会就地修改命令行，故用可写副本
-    std::string cmdline = cmd;
-    BOOL ok = CreateProcessA(nullptr, cmdline.data(), nullptr, nullptr, TRUE,
-                             CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
-    // 关闭我们这侧的写端（子进程持有自己的副本，其关闭后管道读端才会 EOF）
-    CloseHandle(hWrite);
-
-    if (!ok) {
-        DWORD e = GetLastError();
-        CloseHandle(hRead);
-        err = "CreateProcess 失败, code=" + std::to_string(e);
-        return -3;
-    }
-
-    // 持续读取子进程输出，避免管道写满死锁
-    char buf[4096];
-    DWORD n = 0;
-    while (ReadFile(hRead, buf, sizeof(buf), &n, nullptr) && n > 0)
-        output.append(buf, n);
-    CloseHandle(hRead);
-
-    DWORD waitRes = WaitForSingleObject(
-        pi.hProcess, timeoutMs < 0 ? INFINITE : static_cast<DWORD>(timeoutMs));
-    if (waitRes == WAIT_TIMEOUT) {
-        TerminateProcess(pi.hProcess, 1);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        err = "引擎超时(" + std::to_string(timeoutMs) + "ms)";
-        return -2;
-    }
-
-    DWORD exitCode = 0;
-    GetExitCodeProcess(pi.hProcess, &exitCode);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    return static_cast<int>(exitCode);
+    pudu::platform::ProcResult r = pudu::platform::runProcess(cmd, timeoutMs);
+    output = std::move(r.output);
+    err = std::move(r.error);
+    return r.exitCode;
 }
 
 // 探测某 python 解释器能否 import oemer（用于自动选址）
@@ -109,24 +64,57 @@ static bool pythonCanImportOemer(const std::string& pyExe) {
     return rc == 0;
 }
 
+// 探测某 python 解释器能否启动（不要求装任何包）
+static bool pythonCanRun(const std::string& pyExe) {
+    if (pyExe.empty()) return false;
+    std::string out, err;
+    int rc = runCommand("\"" + pyExe + "\" -c \"pass\"", 30000, out, err);
+    return rc == 0;
+}
+
+// python 解释器候选（按平台惯例排序）
+static std::vector<std::string> pythonCandidates(const OmrEngineConfig& cfg) {
+    std::vector<std::string> cands;
+    if (cfg.pythonExplicit && !cfg.python.empty() && cfg.python != "python")
+        cands.push_back(cfg.python);
+    std::string envPy = pudu::platform::envGet("PUDU_OMR_PYTHON");
+    if (!envPy.empty()) cands.push_back(envPy);
+#ifdef _WIN32
+    cands.push_back("python");
+#else
+    // POSIX 惯例是 python3；多数发行版不再提供无版本号的 python
+    cands.push_back("python3");
+    cands.push_back("python");
+#endif
+    std::string home = pudu::platform::homeDir();
+    if (!home.empty()) {
+#ifdef _WIN32
+        cands.push_back(home + "\\.workbuddy\\binaries\\python\\envs\\default\\Scripts\\python.exe");
+#else
+        cands.push_back(home + "/.workbuddy/binaries/python/bin/python3");
+#endif
+    }
+    return cands;
+}
+
 // 解析可用于 oemer 的 python（见头文件声明）
 std::string resolveOmerPython(const OmrEngineConfig& cfg) {
     if (cfg.pythonExplicit && !cfg.python.empty() && cfg.python != "python")
         return cfg.python;
-    std::vector<std::string> cands;
-    char buf[1024];
-    DWORD n;
-    if ((n = GetEnvironmentVariableA("PUDU_OMR_PYTHON", buf, sizeof(buf))) > 0 && n < sizeof(buf))
-        cands.push_back(std::string(buf));
-    cands.push_back("python");
-    if ((n = GetEnvironmentVariableA("USERPROFILE", buf, sizeof(buf))) > 0 && n < sizeof(buf)) {
-        std::string up(buf);
-        cands.push_back(up + "\\.workbuddy\\binaries\\python\\envs\\default\\Scripts\\python.exe");
-    }
-    for (const auto& c : cands) {
+    for (const auto& c : pythonCandidates(cfg)) {
         if (pythonCanImportOemer(c)) return c;
     }
     return cfg.python; // 兜底（原默认），错误信息据此生成
+}
+
+// 解析「能启动」的 python（不要求装 oemer）
+std::string resolvePython(const OmrEngineConfig& cfg) {
+    if (cfg.pythonExplicit && !cfg.python.empty())
+        return cfg.python;
+    for (const auto& c : pythonCandidates(cfg)) {
+        if (pythonCanRun(c)) return c;
+    }
+    return cfg.python;
 }
 
 // 写内嵌 fixture 样例到 out（C++ 原生，确定性）
@@ -227,19 +215,24 @@ bool isOmrEngineAvailable(const OmrEngineConfig& cfg, std::string& detail) {
         return false;
     }
     if (cfg.engine == "audiveris") {
-        // 不探测 python（AV 适配层 stdlib-only；python 可用性交给 runOmr 的
-        // CreateProcess 失败自然暴露）。AV exe 定位在 Python 侧经 env
-        // PUDU_AUDIVERIS_EXE / 仓库默认路径，C++ 不碰。
+        // AV exe 定位在 Python 侧经 env PUDU_AUDIVERIS_EXE / 平台默认路径，C++ 不碰。
+        // C++ 侧只需确认：适配层脚本在位 + 有可用的 python 解释器。
         if (cfg.toolsDir.empty()) {
             detail = "audiveris 引擎未配置 toolsDir";
             return false;
         }
         std::string script = cfg.toolsDir + "/omr_audiveris.py";
-        if (GetFileAttributesA(script.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        if (!pudu::platform::fileExists(script)) {
             detail = "audiveris 适配层缺失: " + script;
             return false;
         }
-        detail = "audiveris 可用（toolsDir=" + cfg.toolsDir + "）";
+        std::string py = resolvePython(cfg);
+        if (!pythonCanRun(py)) {
+            detail = "audiveris 引擎需可用的 python 解释器，当前不可用 (python=" +
+                     py + ")";
+            return false;
+        }
+        detail = "audiveris 可用（toolsDir=" + cfg.toolsDir + "，python=" + py + "）";
         return true;
     }
     detail = "未知引擎: " + cfg.engine;

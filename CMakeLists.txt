@@ -1,45 +1,63 @@
 cmake_minimum_required(VERSION 3.25)
 
 # ----------------------------------------------------------------------
-# 1. vcpkg toolchain 自动发现
-#    推荐做法：在 CMakePresets.json 里传入 CMAKE_TOOLCHAIN_FILE。
-#    如果直接双击 CMake GUI 或命令行没传，则尝试读 VCPKG_ROOT 环境变量。
+# 谱渡 Pudu · 构建配置（Windows / macOS / Linux）
 # ----------------------------------------------------------------------
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    if(DEFINED ENV{VCPKG_ROOT})
-        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
-            CACHE STRING "vcpkg toolchain" FORCE)
-    else()
-        message(FATAL_ERROR
-            "VCPKG_ROOT 环境变量未设置，CMake 无法找到 vcpkg toolchain。\n"
-            "请先：1) git clone https://github.com/microsoft/vcpkg.git D:\\vcpkg\n"
-            "      2) 运行 D:\\vcpkg\\bootstrap-vcpkg.bat\n"
-            "      3) 设置系统环境变量 VCPKG_ROOT=D:\\vcpkg\n"
-            "      4) 重启 VS Code / 终端\n"
-            "或者通过 CMakePresets.json 传入 CMAKE_TOOLCHAIN_FILE。")
-    endif()
-endif()
-
-# 谱渡 Pudu —— 五线谱 ⇄ 简谱互转工具（OMR）
-project(Pudu VERSION 0.1.0 LANGUAGES CXX)
+project(Pudu VERSION 0.9.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# 与 vcpkg 默认 x64-windows 动态 triplet 保持 CRT 一致 (/MD)
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # ----------------------------------------------------------------------
-# 2. 查找依赖
-#    - OpenCV：图像处理
-#    - pugixml：读写 MusicXML（MusicXML 本质就是 XML，用轻量 XML 库即可，
-#      无需重量级的 libmusicxml2；后者未收录进 vcpkg，MSVC 源码编译也较麻烦）
+# 1. vcpkg toolchain 自动发现（仅在可用时）
+#    Windows 推荐走 vcpkg（vcpkg.json 声明 pugixml）。
+#    macOS / Linux 不强制要求 vcpkg：优先用系统已安装的 pugixml，
+#    缺失时回退到 FetchContent 源码拉取（见第 2 节）。
 # ----------------------------------------------------------------------
-# find_package(OpenCV REQUIRED)  # MVP阶段暂不编译OpenCV，待网络稳定后用 opencv.org 预编译包接入
-find_package(pugixml CONFIG REQUIRED)
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
+    set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        CACHE STRING "vcpkg toolchain" FORCE)
+endif()
 
 # ----------------------------------------------------------------------
-# 3. 构建目标
+# 2. 依赖：pugixml（读写 MusicXML）
+#    MusicXML 本质就是 XML，用轻量 XML 库即可，无需 libmusicxml2
+#    （后者未收录进 vcpkg，MSVC 源码编译也较麻烦）。
+#    查找顺序：已安装（vcpkg / brew / apt） → FetchContent 源码回退
+# ----------------------------------------------------------------------
+find_package(pugixml CONFIG QUIET)
+if(pugixml_FOUND)
+    message(STATUS "pudixml: 使用已安装版本")
+else()
+    message(STATUS "pudixml: 未找到已安装版本，改用 FetchContent 源码拉取")
+    include(FetchContent)
+    FetchContent_Declare(pugixml
+        GIT_REPOSITORY https://github.com/zeux/pugixml.git
+        GIT_TAG        v1.14
+        GIT_SHALLOW    TRUE)
+    set(PUGIXML_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(PUGIXML_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(pugixml)
+endif()
+
+# 与 vcpkg 默认 x64-windows 动态 triplet 保持 CRT 一致 (/MD)。
+# 仅 MSVC 生效——其它平台设置该变量无意义且会被 CMake 忽略。
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
+
+# ----------------------------------------------------------------------
+# 3. 平台层：把 OS 专属调用收敛到 platform_win / platform_posix
+# ----------------------------------------------------------------------
+if(WIN32)
+    set(PUDU_PLATFORM_SOURCES src/platform/platform_win.cpp)
+else()
+    set(PUDU_PLATFORM_SOURCES src/platform/platform_posix.cpp)
+endif()
+
+# ----------------------------------------------------------------------
+# 4. 构建目标
 # ----------------------------------------------------------------------
 add_executable(Pudu
     src/main.cpp
@@ -51,9 +69,10 @@ add_executable(Pudu
     src/jianpu_text_parser.cpp    # G4：简谱文本输入解析（L1 文本 -> JianpuDoc）
     src/omr_adapter.cpp           # 阶段1 OMR 黑盒集成适配层
     src/jianpu_postcorrect.cpp    # P1-1：后处理音乐规则引擎（确定性自修/标记）
+    ${PUDU_PLATFORM_SOURCES}
 )
 
-# 头文件目录（score_model.hpp / musicxml_parser.hpp 位于 include/）
+# 头文件目录（score_model.hpp / musicxml_parser.hpp / platform/ 位于 include/）
 target_include_directories(Pudu PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
@@ -64,32 +83,28 @@ if(MSVC)
     target_compile_options(Pudu PRIVATE /utf-8)
 endif()
 
-# 注入 tools/ 绝对路径（转正斜杠，避免 Windows 反斜杠在字符串字面量中成非法转义），
+# 注入 tools/ 绝对路径（转正斜杠，避免 Windows 反斜杠在字符串字面量成非法转义），
 # 供 omr_adapter 的子进程引擎（oemer/audiveris 预设）定位运行器脚本
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tools" PUDU_TOOLS_DIR_FWD)
 target_compile_definitions(Pudu PRIVATE "PUDU_TOOLS_DIR=\"${PUDU_TOOLS_DIR_FWD}\"")
 
-# target_include_directories(Pudu PRIVATE
-#     ${OpenCV_INCLUDE_DIRS}
-# )
-
 target_link_libraries(Pudu PRIVATE
-    # ${OpenCV_LIBS}
     pugixml::pugixml
 )
 
 # ----------------------------------------------------------------------
 # 5. 单元测试目标（header-only 自研框架，零外部依赖）
-#    编译共享源(jianpu_converter/musicxml_parser) + 测试框架 + 测试用例。
-#    运行：./build/windows-msvc-vcpkg/Debug/PuduTests
+#    运行：./build/<preset>/PuduTests
 #    （退出码：全绿 0 / 有失败非 0）
 # ----------------------------------------------------------------------
 enable_testing()
 add_executable(PuduTests
     test/pudu_test_main.cpp
     test/test_jianpu_render_config.cpp
+    test/test_platform.cpp
     src/jianpu_converter.cpp
     src/musicxml_parser.cpp
+    ${PUDU_PLATFORM_SOURCES}
 )
 target_include_directories(PuduTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(MSVC)
@@ -99,7 +114,7 @@ target_link_libraries(PuduTests PRIVATE pugixml::pugixml)
 add_test(NAME pudu_render_config COMMAND PuduTests)
 
 # ----------------------------------------------------------------------
-# 4. Windows 下运行时 DLL 提示
-#    OpenCV 的 DLL 位于 vcpkg_installed/x64-windows/bin，运行时需要能找到。
-#    最省事的做法：在 VS Code 中按 F5 调试时，把该目录加进 PATH（见 README）。
+# 6. 安装
 # ----------------------------------------------------------------------
+include(GNUInstallDirs)
+install(TARGETS Pudu RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

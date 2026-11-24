@@ -1253,16 +1253,36 @@ def mark_meter_constraint_failures(musicxml_path: str, sidecar_path: str = None,
     changed = False
     marked = 0
     for measure in root.iter("measure"):
+        # 按时间轴计算该小节的「占用时长」：正确处理 <backup> / <forward>，
+        # 取各声部推进到的最大位置。
+        # 原实现把各声部的时值直接相加，忽略 <backup>，对双声部小节会把
+        # fill 算成拍号的倍数（如 2/4 的两个声部 → fill=4.0 vs target=2.0），
+        # 导致整份谱子的「小节节拍不符」全数误报。单声部谱的行为不变。
+        pos = 0.0
         fill = 0.0
         first_note = None
         for el in measure:
+            if el.tag == "backup":
+                try:
+                    pos = max(0.0, pos - float(el.findtext("duration", "0") or 0))
+                except (TypeError, ValueError):
+                    pass
+                continue
+            if el.tag == "forward":
+                try:
+                    pos += float(el.findtext("duration", "0") or 0)
+                except (TypeError, ValueError):
+                    pass
+                fill = max(fill, pos)
+                continue
             if el.tag == "note":
                 if el.find("chord") is not None:
                     continue
                 ql = _note_ql(el, divisions)
                 if ql is None:
                     continue
-                fill += ql
+                pos += ql
+                fill = max(fill, pos)
                 if first_note is None:
                     first_note = el
         if first_note is None:
