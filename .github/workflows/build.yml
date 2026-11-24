@@ -29,11 +29,13 @@ jobs:
             label: macos-arm64
             artifact: pudu-macos-arm64
             osx_arch: arm64
-          # 保险：Intel runner 供给比 arm64 充裕得多，交叉编译出同样的 arm64 产物
+          # 保险：Intel runner 供给比 arm64 充裕得多。构建「通用二进制」
+          # （arm64 + x86_64）：Intel runner 跑 x86_64 slice（可做 ctest/冒烟），
+          # Apple Silicon 跑 arm64 slice。一个产物两用。
           - os: macos-15-intel
-            label: macos-arm64-cross
-            artifact: pudu-macos-arm64-cross
-            osx_arch: arm64
+            label: macos-universal
+            artifact: pudu-macos-universal
+            osx_arch: "arm64;x86_64"
           - os: ubuntu-24.04
             label: linux-x64
             artifact: pudu-linux-x64
@@ -65,7 +67,7 @@ jobs:
         run: |
           if [ -n "${{ matrix.osx_arch }}" ]; then
             cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_OSX_ARCHITECTURES=${{ matrix.osx_arch }}
+              -DCMAKE_OSX_ARCHITECTURES="${{ matrix.osx_arch }}"
           else
             cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           fi
