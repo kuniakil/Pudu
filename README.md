@@ -28,8 +28,11 @@
 >
 > - **[docs/REFERENCES.md](docs/REFERENCES.md)** — 语料位置、ground truth 抓取规律、现成服务、候选 fork 项目
 > - **[docs/JIANPU-CONVERSION-NOTES.md](docs/JIANPU-CONVERSION-NOTES.md)** — 差距分析、难点拆解、路线选择
+> - **[data/yxdc/MANIFEST.md](data/yxdc/MANIFEST.md)** — 《月下煮茶》ground truth 语料清单与小节对齐表
 >
 > 关键结论：目标体裁若为「双手简谱」，**不需要**做「左手→和弦识别」，难度远低于初判。
+>
+> 重建 ground truth 语料：`bash tools/fetch_ground_truth.sh`（按 sha256 校验，幂等）。
 >
 > 以下为上游原始 README（功能与架构的权威文档）。
 

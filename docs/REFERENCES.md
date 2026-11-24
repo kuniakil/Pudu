@@ -17,6 +17,7 @@
 | 有哪些路可以走 | `JIANPU-CONVERSION-NOTES.md` §7 |
 | 参考语料在哪 | **本文** §1 |
 | 怎么拿到「五线谱 + 对应简谱」的配对 | **本文** §2 ⭐ |
+| 语料清单 / 小节对齐表 / 已知坑 | **`data/yxdc/MANIFEST.md`** ⭐ |
 | 有没有现成服务能做 | **本文** §3 |
 | 要 fork 别人哪些仓库 | **本文** §4 |
 | OMR 引擎怎么装 | **本文** §5 |
@@ -47,12 +48,12 @@ Nextcloud 实体在 **n100**（ssh `n100`，用户 `kuniaki`），路径 `~/文�
 
 ---
 
-## 2. ⭐ ground truth 配对（最有价值的一条）
+## 2. ⭐ ground truth 配对（**已抓取落地 2026-11-24**）
 
 **everyonepiano.cn（= eopiano.com 中文站）同一页面同时提供五线谱与简谱。**
 
 《月下煮茶》页面 `https://everyonepiano.cn/Piano-19895.html`：**5 张五线谱 + 3 张简谱**，
-而那 3 张简谱**正是** §1.1 里的 `月下煮茶01~03.png`。
+而那 3 张简谱**正是** §1.1 里的 `月下煮茶01~03.png`（**sha256 完全一致**）。
 
 图片 URL 规律（已实测）：
 
@@ -64,15 +65,20 @@ https://everyonepiano.cn/pianomusic/020/0019895/0019895-j-b-{N}.png   ← 简谱
 **抓取注意**：`www.everyonepiano.cn` 的 DNS 解析不了，**去掉 `www.`** 才能访问；
 但图片 URL 带不带 `www.` 都能取到。
 
+### 2.1 重建指令（幂等 + sha256 校验）
+
 ```bash
-mkdir -p /tmp/yxdc && cd /tmp/yxdc
-for n in 1 2 3 4 5; do
-  for k in w j; do
-    curl -sS -L -A "Mozilla/5.0" -o "${k}${n}.png" \
-      "https://everyonepiano.cn/pianomusic/020/0019895/0019895-${k}-b-${n}.png"
-  done
-done
+bash tools/fetch_ground_truth.sh
 ```
+
+图片落在 `data/yxdc/`（**不入版本库**，按 sha256 重建）；
+`data/yxdc/MANIFEST.md` + `SHA256SUMS` 入库，记录清单、小节对齐表与已知问题。
+
+### 2.2 ⚠️ 已知问题：两版小节数对不上
+
+五线谱版推得 **78 小节**，简谱版推得 **79 小节**；印刷小节号只在 1 / 13 / 25 / 61 处吻合，
+之后开始漂移。**逐小节比对前必须先定位差异**，否则结论全是假阳性。
+完整对齐表与推测见 [`data/yxdc/MANIFEST.md`](../data/yxdc/MANIFEST.md) §3。
 
 **为什么重要**：这是同一部作品的「输入 → 期望输出」配对，能**逐小节量化**整条链路的准确率，
 把「排版难看」和「音符其实是错的」这两件事分开——后者目前**尚未被证明存在**。
@@ -118,7 +124,7 @@ done
 
 | 平台 | 产物 | 备注 |
 |---|---|---|
-| macOS Apple Silicon | `Audiveris-5.11.0-macosx-arm64.dmg`（81MB） | **自签未签名**；官方安装后约 162MB |
+| macOS Apple Silicon | `Audiveris-5.11.0-macosx-arm64.dmg`（84.9MB） | **自签未签名**；官方安装后约 162MB |
 | macOS Intel | `Audiveris-5.11.0-macosx-x86_64.dmg` | 同上 |
 | Linux x86_64 | `Audiveris-5.11.0-ubuntu24.04-x86_64.deb` | 装到 `/opt/audiveris/bin/Audiveris` |
 | Linux aarch64 | **无** | ARM 机器（如 arm.3pm.lol）用不了官方 deb |
@@ -133,7 +139,18 @@ Audiveris -batch -export [-sheets N] -output <dir> -- <input>
 
 **本机清理记录（2026-11-24）**：已卸载
 `/Applications/Audiveris.app`（162MB）+ `~/Library/Application Support/AudiverisLtd`（OCR 数据）。
-需用时重新下载安装。
+**目前处于未安装状态**，下次要跑 OMR 时需重新下载安装（约 5 分钟）：
+
+```bash
+# 注意：用 curl 下载不会带 quarantine 标记，可绕过 Gatekeeper 拦截
+curl -L -o /tmp/audiveris.dmg \
+  https://github.com/Audiveris/audiveris/releases/download/5.11.0/Audiveris-5.11.0-macosx-arm64.dmg
+MP=$(printf 'Y\nY\n' | hdiutil attach -nobrowse -noverify -noautoopen /tmp/audiveris.dmg | grep -o '/Volumes/.*')
+cp -R "$MP/Audiveris.app" /Applications/
+hdiutil detach "$MP"
+```
+
+（dmg 实际 84.9MB；安装后约 162MB。`hdiutil attach` 会因 AGPL 许可提示需要两次 `Y`。）
 
 ---
 
