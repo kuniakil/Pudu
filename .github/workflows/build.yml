@@ -28,9 +28,16 @@ jobs:
           - os: macos-15
             label: macos-arm64
             artifact: pudu-macos-arm64
+            osx_arch: arm64
+          # 保险：Intel runner 供给比 arm64 充裕得多，交叉编译出同样的 arm64 产物
+          - os: macos-15-intel
+            label: macos-arm64-cross
+            artifact: pudu-macos-arm64-cross
+            osx_arch: arm64
           - os: ubuntu-24.04
             label: linux-x64
             artifact: pudu-linux-x64
+            osx_arch: ""
 
     steps:
       - uses: actions/checkout@v4
@@ -55,7 +62,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends libpugixml-dev
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: |
+          if [ -n "${{ matrix.osx_arch }}" ]; then
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_OSX_ARCHITECTURES=${{ matrix.osx_arch }}
+          else
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          fi
 
       - name: Build
         run: cmake --build build --parallel
@@ -66,6 +79,10 @@ jobs:
       # 冒烟测试：无输入参数时应回退到内嵌样例并正常解析
       - name: Smoke test
         run: ./build/Pudu
+
+      - name: Verify architecture
+        if: runner.os == 'macOS'
+        run: file build/Pudu
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
