@@ -9,8 +9,10 @@
 // ----------------------------------------------------------------------
 
 #include <iostream>
+#ifdef _WIN32
 #include <windows.h>
 #include <shellapi.h>
+#endif
 #include <string>
 #include <vector>
 #include <fstream>
@@ -83,7 +85,9 @@ const char* kEmbeddedSample = R"(<?xml version="1.0" encoding="UTF-8"?>
 } // anonymous namespace
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
     SetConsoleOutputCP(65001); // 设置控制台输出代码页为 UTF-8，消除中文乱码
+#endif
 
 #ifdef _WIN32
     // Windows 窄字符 argv 按 ANSI 代码页（cp936）解码，中文参数（如 --title）会

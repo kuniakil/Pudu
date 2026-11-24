@@ -1,0 +1,74 @@
+name: build
+
+# 触发条件：push 任意分支 / PR / 手动触发
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-arm64
+            label: macos-arm64
+            artifact: pudu-macos-arm64
+          - os: ubuntu-24.04
+            label: linux-x64
+            artifact: pudu-linux-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure Ninja is available
+        run: |
+          if ! command -v ninja >/dev/null 2>&1; then
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends ninja-build
+            else
+              brew install ninja
+            fi
+          fi
+
+      # pugixml：优先用系统已安装版本（Linux apt / macOS brew）；
+      # 都没有时 CMake 会自动回退到 FetchContent 源码拉取。
+      - name: Install pugixml (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpugixml-dev
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test (ctest)
+        run: ctest --test-dir build --output-on-failure
+
+      # 冒烟测试：无输入参数时应回退到内嵌样例并正常解析
+      - name: Smoke test
+        run: ./build/Pudu
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            build/Pudu
+            tools/
+          if-no-files-found: error
