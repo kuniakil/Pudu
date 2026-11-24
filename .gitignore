@@ -105,3 +105,7 @@ to_be_delete/
 
 # quickstart 产物目录
 data/pudu_out/
+
+# macOS
+.DS_Store
+**/.DS_Store
