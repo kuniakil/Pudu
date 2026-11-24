@@ -12,7 +12,8 @@ permissions:
 
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  # 不取消进行中的 run：macOS runner 排队较久，取消重排会白等
+  cancel-in-progress: false
 
 jobs:
   build:

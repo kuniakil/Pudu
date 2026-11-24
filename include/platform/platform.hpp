@@ -45,6 +45,10 @@ std::string envGet(const char* name);
 // 用户主目录：Windows 取 USERPROFILE，POSIX 取 HOME；未设置时返回空串。
 std::string homeDir();
 
+// 当前可执行文件所在目录（不含尾部分隔符）；取不到时返回空串。
+// 用于「便携发行」布局下的资源定位（tools/ 与二进制同级）。
+std::string executableDir();
+
 // 文件是否存在。
 bool fileExists(const std::string& path);
 

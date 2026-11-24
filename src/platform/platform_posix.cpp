@@ -28,7 +28,12 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <vector>
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 namespace pudu {
 namespace platform {
@@ -179,6 +184,28 @@ std::string envGet(const char* name) {
 }
 
 std::string homeDir() { return envGet("HOME"); }
+
+std::string executableDir() {
+    char buf[4096];
+    ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) {
+#ifdef __APPLE__
+        // macOS 无 /proc；用 dyld 取自身路径
+        uint32_t size = 0;
+        if (_NSGetExecutablePath(nullptr, &size) != 0 || size == 0) return {};
+        std::vector<char> tmp(size);
+        if (_NSGetExecutablePath(tmp.data(), &size) != 0) return {};
+        n = static_cast<ssize_t>(size);
+        std::memcpy(buf, tmp.data(), std::min<size_t>(size, sizeof(buf) - 1));
+#else
+        return {};
+#endif
+    }
+    buf[n] = '\0';
+    std::string p(buf);
+    size_t slash = p.find_last_of('/');
+    return slash == std::string::npos ? std::string() : p.substr(0, slash);
+}
 
 bool fileExists(const std::string& path) {
     struct stat st {};

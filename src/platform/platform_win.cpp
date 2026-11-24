@@ -81,6 +81,15 @@ std::string envGet(const char* name) {
 
 std::string homeDir() { return envGet("USERPROFILE"); }
 
+std::string executableDir() {
+    char buf[MAX_PATH];
+    DWORD n = GetModuleFileNameA(nullptr, buf, sizeof(buf));
+    if (n == 0 || n >= sizeof(buf)) return {};
+    std::string p(buf, n);
+    size_t slash = p.find_last_of("/\\");
+    return slash == std::string::npos ? std::string() : p.substr(0, slash);
+}
+
 bool fileExists(const std::string& path) {
     return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
 }
